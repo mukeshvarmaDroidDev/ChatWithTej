@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # Load env variables from .env
@@ -15,8 +16,19 @@ load_dotenv()
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.session.agent import AgentSession
+from db_init import init_products_db
 
-app = FastAPI(title="ChatWithTej Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize products database
+    try:
+        init_products_db()
+    except Exception as e:
+        print(f"lifespan startup error: {e}")
+    yield
+
+app = FastAPI(title="ChatWithTej Backend", lifespan=lifespan)
+
 
 # Enable CORS for React frontend
 app.add_middleware(
@@ -160,6 +172,47 @@ async def get_session_history(session_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get history: {str(e)}")
 
 
+def query_products_database(query: str) -> str:
+    """
+    Execute a read-only PostgreSQL SELECT query on the products database.
+    Use this tool to find information about products, categories, brands, prices, stock, ratings, and descriptions.
+    
+    Args:
+        query (str): The SELECT query to run (e.g. "SELECT * FROM products;").
+        
+    Returns:
+        str: JSON string of matching products or error.
+    """
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    
+    clean_query = query.strip()
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Executing SQL query: {clean_query}", flush=True)
+    if not clean_query.upper().startswith("SELECT"):
+        return json.dumps({"error": "Only SELECT queries are allowed."})
+        
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=os.environ.get("POSTGRES_HOST", "localhost"),
+            port=os.environ.get("POSTGRES_PORT", "5432"),
+            database=os.environ.get("POSTGRES_DB", "tej_products"),
+            user=os.environ.get("POSTGRES_USER", "tej_user"),
+            password=os.environ.get("POSTGRES_PASSWORD", "tej_password")
+        )
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(clean_query)
+            results = cur.fetchall()
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Query returned {len(results)} rows: {results}", flush=True)
+            return json.dumps(results, default=str)
+    except Exception as e:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Query error: {e}", flush=True)
+        return json.dumps({"error": str(e)})
+    finally:
+        if conn:
+            conn.close()
+
+
 def generate_agent_stream(
     message: str,
     session_id: str,
@@ -183,16 +236,42 @@ def generate_agent_stream(
     try:
         from agno.models.google import Gemini
         
-        tools = []
+        tools = [query_products_database]
         if enable_search:
             from agno.tools.duckduckgo import DuckDuckGoTools
             tools.append(DuckDuckGoTools())
+
+        base_instructions = [
+            "You are a helpful assistant with access to a PostgreSQL database containing product details.",
+            "You can query the database using the `query_products_database` tool.",
+            "The database contains a table named `products` with the following schema:",
+            "- `id` (SERIAL PRIMARY KEY)",
+            "- `name` (VARCHAR(255) NOT NULL) - e.g., 'MacBook Air M2', 'iPhone 15'",
+            "- `category` (VARCHAR(100) NOT NULL) - e.g., 'Laptop', 'Mobile', 'Headphones', 'Accessories', 'Tablet', 'Smart Home'",
+            "- `brand` (VARCHAR(100) NOT NULL) - e.g., 'Apple', 'Dell', 'Samsung', 'Sony', 'Logitech', 'ASUS', 'Boat', 'OnePlus', 'HP', 'Amazon'",
+            "- `price` (INT NOT NULL) - price in Indian Rupees (₹)",
+            "- `stock` (INT NOT NULL) - number of items in stock",
+            "- `rating` (DECIMAL(3, 2) NOT NULL) - user rating out of 5.0",
+            "- `description` (TEXT NOT NULL) - product description containing key features (e.g., 'noise cancelling', 'gaming', 'M2 chip')",
+            "",
+            "When answering questions related to products, stock, ratings, or prices, always query the database first.",
+            "If the user asks questions like:",
+            "1. 'Which laptop is best for gaming?' -> Query laptops and check their descriptions for 'gaming' or check ratings.",
+            "2. 'Show products under ₹10,000' -> Query products where price < 10000.",
+            "3. 'Which products are out of stock?' -> Query products where stock = 0. If none, state that none are out of stock.",
+            "4. 'What is the highest rated phone?' -> Query category = 'Mobile' ordered by rating descending limit 1.",
+            "5. 'Compare Apple products' -> Query products where brand = 'Apple'.",
+            "6. 'Which headphones have noise cancellation?' -> Query headphones and check descriptions for 'noise cancellation' or 'noise cancelling'.",
+            "Present findings in a neat, professional markdown format, highlighting specifications like price (formatted in ₹), rating, and stock status."
+        ]
+        if system_instruction:
+            base_instructions.append(system_instruction)
 
         agent = Agent(
             model=Gemini(id=model_id),
             db=db,
             add_history_to_context=True,
-            instructions=[system_instruction] if system_instruction else None,
+            instructions=base_instructions,
             tools=tools,
         )
 
