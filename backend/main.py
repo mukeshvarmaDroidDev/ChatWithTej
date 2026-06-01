@@ -17,8 +17,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.session.agent import AgentSession
 from db_init import init_products_db
-from langfuse.decorators import observe, langfuse_context
-
+# from langfuse.decorators import observe, langfuse_context
+from langfuse import observe, propagate_attributes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -243,12 +243,11 @@ def generate_agent_stream(
     user_api_key: Optional[str]
 ):
     try:
-        langfuse_context.update_current_trace(
-            input=message,
+        propagate_attributes(
             session_id=session_id,
             metadata={
-                "model_id": model_id,
-                "enable_search": enable_search
+                "model_id": str(model_id),
+                "enable_search": str(enable_search)
             }
         )
     except Exception as e:
