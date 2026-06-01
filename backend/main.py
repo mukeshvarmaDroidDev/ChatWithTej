@@ -25,7 +25,25 @@ async def lifespan(app: FastAPI):
         init_products_db()
     except Exception as e:
         print(f"lifespan startup error: {e}")
+
+    # Initialize Langfuse and OpenTelemetry instrumentation for Agno
+    try:
+        if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
+            from langfuse import get_client
+            from openinference.instrumentation.agno import AgnoInstrumentor
+            
+            # Initialize global Langfuse client (registers OTel SpanProcessor)
+            get_client()
+            
+            # Instrument Agno
+            AgnoInstrumentor().instrument()
+            print("Langfuse and Agno OpenTelemetry instrumentation initialized successfully.", flush=True)
+        else:
+            print("Langfuse keys not configured. Observability tracing is disabled.", flush=True)
+    except Exception as e:
+        print(f"Failed to initialize Langfuse/Agno telemetry: {e}", flush=True)
     yield
+
 
 app = FastAPI(title="ChatWithTej Backend", lifespan=lifespan)
 
