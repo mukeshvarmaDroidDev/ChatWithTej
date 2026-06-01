@@ -10,4 +10,5 @@ aiosqlite
 psycopg2-binary>=2.9.0
 langfuse>=3.0.0
 openinference-instrumentation-agno>=0.1.0
+opentelemetry-api
 opentelemetry-sdk

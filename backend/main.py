@@ -17,6 +17,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.session.agent import AgentSession
 from db_init import init_products_db
+from langfuse.decorators import observe, langfuse_context
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -231,6 +233,7 @@ def query_products_database(query: str) -> str:
             conn.close()
 
 
+@observe(name="chat-response")
 def generate_agent_stream(
     message: str,
     session_id: str,
@@ -239,6 +242,18 @@ def generate_agent_stream(
     system_instruction: Optional[str],
     user_api_key: Optional[str]
 ):
+    try:
+        langfuse_context.update_current_trace(
+            input=message,
+            session_id=session_id,
+            metadata={
+                "model_id": model_id,
+                "enable_search": enable_search
+            }
+        )
+    except Exception as e:
+        print(f"Failed to update Langfuse trace: {e}", flush=True)
+
     api_key = user_api_key or os.getenv("GEMINI_API_KEY")
     if not api_key:
         yield f"data: {json.dumps({'type': 'error', 'content': 'API Key not configured. Please enter your Gemini API Key in the settings.'})}\n\n"
