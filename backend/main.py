@@ -17,7 +17,6 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.session.agent import AgentSession
 from db_init import init_products_db
-# from langfuse.decorators import observe, langfuse_context
 from langfuse import observe, propagate_attributes
 
 @asynccontextmanager
@@ -266,7 +265,7 @@ def generate_agent_stream(
     os.environ["GOOGLE_API_KEY"] = api_key
 
     try:
-        from agno.models.google import Gemini
+        from agno.models.litellm.litellm_openai import LiteLLMOpenAI
         
         tools = [query_products_database]
         if enable_search:
@@ -300,7 +299,11 @@ def generate_agent_stream(
             base_instructions.append(system_instruction)
 
         agent = Agent(
-            model=Gemini(id=model_id),
+            model=LiteLLMOpenAI(
+                id=model_id,
+                api_key=os.getenv("LITELLM_API_KEY"),
+                base_url=os.getenv("LITELLM_BASE_URL"),
+            ),
             db=db,
             add_history_to_context=True,
             instructions=base_instructions,
