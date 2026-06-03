@@ -71,7 +71,7 @@ class RenameSessionRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     session_id: str
-    model_id: Optional[str] = "gemini/gemini-2.5-flash"
+    model_id: Optional[str] = "gemini-flash"
     enable_search: Optional[bool] = False
     system_instruction: Optional[str] = None
     user_api_key: Optional[str] = None
